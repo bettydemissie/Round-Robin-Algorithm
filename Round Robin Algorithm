@@ -1,0 +1,205 @@
+#!/bin/bash
+ 
+n=$#
+ 
+#CORECT NUMBER OF PARAMETERS
+if test $n -ne 2
+then
+echo "incorrect number of parameters"
+exit
+fi
+ 
+#IS THE FILE REGULAR
+if ! test -f $1
+then
+echo "$1 is not a regular file"
+exit
+fi
+ 
+#READ DATA AND STORE IN ARRAY
+ 
+P=()
+AT=()
+NUT=()
+STATUS=()
+ 
+while read -r line
+do
+echo "$line" | tee -a dataoutput.txt
+ linearray=($line)
+ s="${#linearray[*]}"
+  P+=(${linearray[0]})
+  AT+=(${linearray[1]})
+  NUT+=(${linearray[2]})
+ 
+ done < $1
+ 
+#CHECK THE NUMBER OF PROCESSES
+ 
+N_TASKS=${#P[@]}
+ 
+ 
+#SET STATUS TO EMPTY
+for((i=0; i<N_TASKS; i++))
+do
+STATUS[$i]+="-"
+done
+ 
+#echo ${STATUS[@]}
+ 
+# CREATE A MAP OF TASK LABELS TO OFFSETS IN THE TASK ARRAY
+# SO WE CAN GO FROM TASK LABEL TO TASK NUMBER
+# THIS IS IMPORTANT BECAUSE IN CASE WE CHANGE THE ORDER
+# OF A TASK IN THE QUEUE WE CAN STILL FIND ITS INFO IN THE OTHER ARRAYS
+declare -A TASK_MAP
+j=0
+for i in "${P[@]}"
+do
+    TASK_MAP[$i]=$j
+    ((j++))
+done
+#echo "These are the task mappings..."
+ 
+# CREATE THE INITIAL TASK QUEUE
+declare -a TASK_QUEUE_ARR
+for (( i=0; i<N_TASKS; i++)); do
+    TASK_QUEUE_ARR[i]=${P[i]};
+done
+ 
+# NOW SORT THE TASK QUEUE BY THE ARRIVAL TIME ASC
+# TASKS THAT CAN START EARLIER GO AT THE FRONT
+ 
+while :
+do
+    swapped=0
+    for (( i=1; i<=N_TASKS-1; i++)); do
+ 
+        # FIND THE LABELS OF THE TWO TASKS WE ARE GOING TO COMPARE
+        left_key=${TASK_QUEUE_ARR[$i-1]}
+        right_key=${TASK_QUEUE_ARR[$i]}
+ 
+        # FIND THE OFFSET IN THE ARRAY POINTING TO THIS TASK
+        left_offset=${TASK_MAP[$left_key]}
+        right_offset=${TASK_MAP[$right_key]}
+        
+        # FIND THE START TIMES FOR THESE TWO TASKS
+        left_start_time=${AT[left_offset]}
+        right_start_time=${AT[right_offset]}
+ 
+        # CHECK IF WE NEED TO SWAP THEM AROUND
+        if ((left_start_time > right_start_time)); then
+            TASK_QUEUE_ARR[i]=$left_key;
+            TASK_QUEUE_ARR[i-1]=$right_key;
+            swapped=1
+        fi
+    done
+ 
+    # WE DIDNT DO ANY SWAPS IN THIS LOOP SO ALL ARE IN ORDER
+    if ((swapped==0))
+        then
+          break
+    fi
+done
+ 
+ 
+# SHOW THE NEW TASK QUEUE ORDER
+ 
+for i in "${TASK_QUEUE_ARR[@]}"
+do
+    offset=${TASK_MAP[$i]}
+    start_time=${AT[offset]}
+#    echo "${i}, starting at ${start_time}"
+done
+ 
+ 
+# NOW PROCESS THE TASKS STARTING AT TIME=0
+# AND CONTINUE UNTIL NO TASKS STILL HAVE POSITIVE
+# PROCESSING TIME
+ 
+# PROCESS THE TASKS IN A ROUND ROBIN FORMAT
+# SO THAT TASKS THAT RUN GO TO THE BACK OF THE QUEUE
+ 
+for i  in "${P[@]}"; do
+    printf "\t%s" "${i}" | tee -a  dataoutput.txt
+done
+printf "\n" | tee -a dataoutput.txt
+T=0
+while :
+do
+    echo -e "$T" "\c" | tee -a dataoutput.txt
+    PICKED="-1"
+ 
+    # LOOP OVER THE TASK QUEUE LOOKING FOR A TASK THAT IS RUNNABLE
+    queue_pos=0
+ 
+    for (( i=0; i<N_TASKS; i++))
+        do
+        candidate=${TASK_QUEUE_ARR[i]}
+ 
+        # FIND THE OFFSET TO THIS TASKS DATA IN THE ARRAYS
+        offset=${TASK_MAP[$candidate]}
+        time_remaining=${NUT[offset]}
+ 
+        # DOES THIS TASK HAVE TIME REMAINING?
+        if ((time_remaining > 0))
+            then
+ 
+            # IS THIS TASK ABLE TO RUN AT THE CURRENT TIME?
+            start_time=${AT[offset]}
+            if ((start_time <= T))
+             then
+                PICKED=$candidate
+                queue_pos=${i}
+                index=TASK_MAP[$candidate]
+                STATUS[index]="R"
+                printf "\t%s"  "${STATUS[@]}" | tee -a dataoutput.txt
+                printf "\n" | tee -a dataoutput.txt
+             break;
+           fi
+         fi
+   done
+        # NOTHING COULD BE PICKED, WE MUST BE FINISHED
+    if ((PICKED=="-1"))
+         then
+        #echo "Nothing picked, we are done..."
+         break
+    fi
+ 
+    # REDUCE THE TIME REMAINING FOR THIS TASK BY QUANTA
+    ((quanta=$2))
+     offset=${TASK_MAP[$PICKED]}
+     ((NUT[offset]=NUT[offset]-quanta))
+ 
+    # SHIFT TASKS AFTER THE CURRENT RUNNING TASK FORWARD BY 1 POSITION
+    for (( i=$queue_pos+1; i<N_TASKS; i++))
+     do
+        TASK_QUEUE_ARR[i-1]=${TASK_QUEUE_ARR[i]}
+    done
+ 
+    # PUT THE CURRENTLY RUNNING TASK TO THE BACK OF THE QUEUE
+    # AND SET AS WAITING
+ 
+    TASK_QUEUE_ARR[-1]=${PICKED}
+    index=TASK_MAP[$candidate]
+     STATUS[index]="W"
+     if ((NUT[offset]<0))
+      then
+      STATUS[index]="F"
+     fi
+ 
+ 
+    # CHECK IF THE NUT IS EQUAL TO 0 AND SET TO FINISHED
+      if test ${NUT[index]} -eq  0
+       then
+       STATUS[index]="F"
+      fi 
+      if ((NUT[offset]<0))
+       then
+        STATUS[index]="F"
+      fi
+ 
+   ((T=T+1))
+done
+ 
+printf "\t%s" "${STATUS[@]}" | tee -a dataoutput.txt
+printf "\n" | tee -a dataoutput.txt
